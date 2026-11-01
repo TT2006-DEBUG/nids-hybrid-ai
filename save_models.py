@@ -10,7 +10,7 @@ rf.fit(X_train, y_bin)
 
 iso = IsolationForest(n_estimators=200, contamination=0.01, random_state=42, n_jobs=-1)
 iso.fit(X_train[y_train == "normal"])
-   os.makedirs("models", exist_ok=True)
+os.makedirs("models", exist_ok=True)
 joblib.dump(rf, "models/rf_binary.joblib", compress=3)
 joblib.dump(iso, "models/iso_forest.joblib", compress=3)
 joblib.dump(list(X_train.columns), "models/feature_columns.joblib")
