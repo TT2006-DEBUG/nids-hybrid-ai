@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Intrusion Detection Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f1419; color: #e6edf3; margin: 0; padding: 24px; }
+  h1 { margin-top: 0; }
+  h2 { font-size: 18px; margin: 28px 0 8px; }
+  button { background: #2f81f7; color: #fff; border: 0; padding: 10px 18px; border-radius: 6px; font-size: 15px; cursor: pointer; }
+  button:hover { background: #1f6feb; }
+  .cards { display: flex; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 18px; min-width: 130px; }
+  .num { font-size: 28px; font-weight: 700; }
+  .lbl { font-size: 13px; color: #8b949e; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #30363d; font-size: 14px; }
+  th { color: #8b949e; }
+  tr.caught { background: rgba(248, 81, 73, 0.18); }
+  tr.missed { background: rgba(240, 136, 62, 0.25); }
+  tr.ok { background: rgba(63, 185, 80, 0.10); }
+  tr.false-alarm { background: rgba(210, 153, 34, 0.25); }
+  .legend { color: #8b949e; font-size: 13px; margin: 8px 0 16px; }
+
+  .stat-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+  .stat-name { width: 130px; font-size: 14px; }
+  .bar { flex: 1; display: flex; height: 22px; border-radius: 4px; overflow: hidden; background: #21262d; }
+  .seg { height: 100%; }
+  .stat-pct { width: 150px; text-align: right; font-size: 14px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 4px 0 12px; }
+  .c-both { background: #f85149; }
+  .c-sup { background: #a371f7; }
+  .c-ano { background: #2f81f7; }
+  .c-miss { background: #f0883e; }
+  .c-ok { background: #3fb950; }
+</style>
+</head>
+<body>
+  <h1>AI Intrusion Detection Dashboard</h1>
+
+  <h2>Full test set: 22,544 connections</h2>
+  <div class="legend">
+    <span class="dot c-both"></span>flagged by both models
+    <span class="dot c-sup"></span>supervised only
+    <span class="dot c-ano"></span>anomaly only
+    <span class="dot c-miss"></span>attack missed
+    <span class="dot c-ok"></span>normal, passed
+    · On the normal row, any red, purple or blue is a false alarm.
+  </div>
+  <div id="stats"></div>
+
+  <h2>Try a live batch</h2>
+  <button id="load">Load 20 random connections</button>
+
+  <div class="cards">
+    <div class="card"><div class="num" id="total">0</div><div class="lbl">Connections</div></div>
+    <div class="card"><div class="num" id="alerts">0</div><div class="lbl">Alerts raised</div></div>
+    <div class="card"><div class="num" id="caught">0</div><div class="lbl">Attacks caught</div></div>
+    <div class="card"><div class="num" id="missed">0</div><div class="lbl">Attacks missed</div></div>
+    <div class="card"><div class="num" id="falseAlarms">0</div><div class="lbl">False alarms</div></div>
+  </div>
+
+  <div class="legend">Red = attack caught · Orange = attack missed · Yellow = false alarm · Green = normal, passed</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>True label</th><th>Family</th><th>Protocol</th>
+        <th>Service</th><th>Anomaly score</th><th>Flagged by</th><th>Verdict</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+function classify(r) {
+  const isAttack = r.category !== "normal";
+  if (isAttack && r.alert) return "caught";
+  if (isAttack) return "missed";
+  if (r.alert) return "false-alarm";
+  return "ok";
+}
+
+function flaggedBy(r) {
+  if (r.supervised_flag && r.anomaly_flag) return "both";
+  if (r.supervised_flag) return "supervised";
+  if (r.anomaly_flag) return "anomaly";
+  return "-";
+}
+
+async function loadStats() {
+  const res = await fetch("/stats");
+  if (!res.ok) return;
+  const stats = await res.json();
+  const box = document.getElementById("stats");
+  box.innerHTML = "";
+
+  ["DoS", "Probe", "R2L", "U2R", "normal"].forEach(cat => {
+    const s = stats[cat];
+    const row = document.createElement("div");
+    row.className = "stat-row";
+
+    const name = document.createElement("div");
+    name.className = "stat-name";
+    name.textContent = cat + " (" + s.total + ")";
+
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    [
+      ["c-both", "both models", s.both],
+      ["c-sup", "supervised only", s.supervised_only],
+      ["c-ano", "anomaly only", s.anomaly_only],
+      [cat === "normal" ? "c-ok" : "c-miss", "not flagged", s.not_flagged]
+    ].forEach(([cls, text, n]) => {
+      const seg = document.createElement("div");
+      seg.className = "seg " + cls;
+      seg.style.width = (100 * n / s.total) + "%";
+      seg.title = text + ": " + n;
+      bar.appendChild(seg);
+    });
+
+    const flagged = 100 * (s.total - s.not_flagged) / s.total;
+    const pct = document.createElement("div");
+    pct.className = "stat-pct";
+    pct.textContent = flagged.toFixed(1) + (cat === "normal" ? "% false alarms" : "% detected");
+
+    row.appendChild(name);
+    row.appendChild(bar);
+    row.appendChild(pct);
+    box.appendChild(row);
+  });
+}
+
+async function loadData() {
+  const res = await fetch("/demo?n=20");
+  if (!res.ok) {
+    alert("Server error: " + res.status);
+    return;
+  }
+  const rows = await res.json();
+  const counts = { caught: 0, missed: 0, "false-alarm": 0, ok: 0 };
+  const body = document.getElementById("rows");
+  body.innerHTML = "";
+
+  rows.forEach(r => {
+    const kind = classify(r);
+    counts[kind]++;
+    const tr = document.createElement("tr");
+    tr.className = kind;
+    [r.label, r.category, r.protocol, r.service, r.anomaly_score, flaggedBy(r), r.alert ? "ALERT" : "ok"]
+      .forEach(value => {
+        const td = document.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+      });
+    body.appendChild(tr);
+  });
+
+  document.getElementById("total").textContent = rows.length;
+  document.getElementById("alerts").textContent = rows.filter(r => r.alert).length;
+  document.getElementById("caught").textContent = counts.caught;
+  document.getElementById("missed").textContent = counts.missed;
+  document.getElementById("falseAlarms").textContent = counts["false-alarm"];
+}
+
+document.getElementById("load").addEventListener("click", loadData);
+loadStats();
+</script>
+</body>
+</html>
